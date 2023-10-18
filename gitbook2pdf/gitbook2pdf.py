@@ -102,7 +102,8 @@ class ChapterParser():
         if context.find('footer'):
             context.remove(context.find('footer'))
         context = self.parsehead(context)
-        return html.unescape(ET.tostring(context,encoding='utf-8').decode())
+        # return html.unescape(ET.tostring(context, encoding='utf-8').decode())
+        return ET.tostring(context, encoding='utf-8').decode()
 
     def parsehead(self, context):
         def level(num):
