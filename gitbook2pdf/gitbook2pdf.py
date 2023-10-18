@@ -1,6 +1,5 @@
 import html
 import requests
-import asyncio
 import aiohttp
 import weasyprint
 import datetime
@@ -12,10 +11,9 @@ import sys
 import os
 BASE_DIR = os.path.dirname(__file__)
 
-async def request(url, headers, timeout=None):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=timeout) as resp:
-            return await resp.text()
+def request(url, headers, timeout=None):
+    response = requests.get(url, headers=headers, timeout=timeout)
+    return response.text
 
 
 def local_ua_stylesheets(self):
@@ -195,9 +193,7 @@ class Gitbook2PDF():
     def run(self):
         content_urls = self.collect_urls_and_metadata(self.base_url)
         self.content_list = ["" for _ in range(len(content_urls))]
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.crawl_main_content(content_urls))
-        loop.close()
+        self.crawl_main_content(content_urls)
 
         # main body
         body = "".join(self.content_list)
@@ -211,39 +207,36 @@ class Gitbook2PDF():
 
         self.write_pdf(self.fname, html_text, css_text)
 
-    async def crawl_main_content(self, content_urls):
-        tasks = []
+    def crawl_main_content(self, content_urls):
         for index, urlobj in enumerate(content_urls):
             if urlobj['url']:
-                tasks.append(self.gettext(index, urlobj['url'], urlobj['level'],urlobj['title']))
+                self.gettext(index, urlobj['url'], urlobj['level'],urlobj['title'])
             else:
-                tasks.append(self.getext_fake(index, urlobj['title'], urlobj['level']))
-        await asyncio.gather(*tasks)
+                self.getext_fake(index, urlobj['title'], urlobj['level'])
         print("crawl : all done!")
 
-    async def getext_fake(self, index, title, level):
-        await asyncio.sleep(0.01)
+    def getext_fake(self, index, title, level):
         class_ = get_level_class(level)
         string = f"<h1 class='{class_}'>{title}</h1>"
         self.content_list[index] = string
 
-    async def gettext(self, index, url, level, title):
+    def gettext(self, index, url, level, title):
         '''
         return path's html
         '''
 
         print("crawling : ", url)
         try:
-            metatext = await request(url, self.headers, timeout=10)
+            metatext = request(url, self.headers)
         except Exception as e:
             print("retrying : ", url)
-            metatext = await request(url, self.headers)
-        try:
-            text = ChapterParser(metatext, title, level, ).parser()
-            print("done : ", url)
-            self.content_list[index] = text
-        except IndexError:
-            print('faild at : ', url, ' maybe content is empty?')
+            metatext = request(url, self.headers)
+        # try:
+        text = ChapterParser(metatext, title, level, ).parser()
+        print("done : ", url)
+        self.content_list[index] = text
+        # except IndexError:
+        #     print('faild at : ', url, ' maybe content is empty?')
 
     def write_pdf(self, fname, html_text, css_text):
         tmphtml = weasyprint.HTML(string=html_text)
