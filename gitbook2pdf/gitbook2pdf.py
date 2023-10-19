@@ -9,6 +9,9 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree as ET
 import sys
 import os
+import uuid
+import json
+
 BASE_DIR = os.path.dirname(__file__)
 
 def request(url, headers, timeout=None):
@@ -101,7 +104,9 @@ class ChapterParser():
             context.remove(context.find('footer'))
         context = self.parsehead(context)
         # return html.unescape(ET.tostring(context, encoding='utf-8').decode())
-        return ET.tostring(context, encoding='utf-8').decode()
+        html_doc = ET.tostring(context, encoding='utf-8').decode()
+        # translate_html = translate_main(html_doc)
+        return html_doc
 
     def parsehead(self, context):
         def level(num):
@@ -297,3 +302,44 @@ class Gitbook2PDF():
         lis = ET.HTML(text).xpath("//ul[@class='summary']//li")
         return IndexParser(lis, start_url).parse()
 
+
+def translate_text(text):
+    url = "http://0.0.0.0:5000/translate"
+    data = {
+        "q": text,
+        "source": "en",
+        "target": "ru",
+        "format": "text",
+        "api_key": ""
+    }
+    headers = {"Content-Type": "application/json"}
+
+    response = requests.post(url, data=json.dumps(data), headers=headers)
+    result = response.json()
+    return result['translatedText']
+
+
+def transform_text(tag):
+    if tag.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol'] and tag.contents:
+        tag_text_list = [str(tag_part) for tag_part in tag.contents]
+        code_blocks = {}
+        for index, tag_text in enumerate(tag_text_list):
+            if '<code>' in tag_text:
+                current_uuid = str(uuid.uuid4())
+                code_blocks[current_uuid] = tag_text
+                tag_text_list[index] = current_uuid
+        tag_text = ''.join(tag_text_list)
+        tag_text = translate_text(tag_text)
+        for key_uuid, value_code in code_blocks.items():
+            tag_text = tag_text.replace(key_uuid, value_code)
+        tag_text = f'<{tag.name}>{tag_text}</{tag.name}>'
+        new_tag = BeautifulSoup(tag_text, 'html.parser')
+        tag.replace_with(new_tag)
+
+
+def translate_main(html_doc):
+    soup = BeautifulSoup(html_doc, 'html.parser')
+    tags = soup.find_all()
+    for tag in tags:
+        transform_text(tag)
+    return str(soup)
