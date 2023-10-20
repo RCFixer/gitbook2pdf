@@ -16,7 +16,7 @@ def request(url, headers, timeout=None):
     return response.text
 
 
-def local_ua_stylesheets(self):
+def local_ua_stylesheets(self, form):
     return [weasyprint.CSS(os.path.join(BASE_DIR, './libs/html5_ua.css'))]
 
 
@@ -95,8 +95,10 @@ class ChapterParser():
         tree = ET.HTML(self.original)
         if tree.xpath('//section[@class="normal markdown-section"]'):
             context = tree.xpath('//section[@class="normal markdown-section"]')[0]
-        else:
+        elif tree.xpath('//section[@class="normal"]'):
             context = tree.xpath('//section[@class="normal"]')[0]
+        else:
+            context = tree.xpath('//main')[0]
         if context.find('footer'):
             context.remove(context.find('footer'))
         context = self.parsehead(context)
@@ -192,6 +194,8 @@ class Gitbook2PDF():
 
     def run(self):
         content_urls = self.collect_urls_and_metadata(self.base_url)
+        if not content_urls:
+            content_urls = another_format_urls(self.base_url)
         self.content_list = ["" for _ in range(len(content_urls))]
         self.crawl_main_content(content_urls)
 
@@ -246,7 +250,8 @@ class Gitbook2PDF():
         with open(htmlname, 'w', encoding='utf-8') as f:
             f.write(html_text)
         print('Generating pdf,please wait patiently')
-        tmphtml.write_pdf(fname, stylesheets=[tmpcss])
+        # tmphtml.write_pdf(fname, stylesheets=[tmpcss])
+        tmphtml.write_pdf(fname)
         print('Generated')
 
     def collect_urls_and_metadata(self, start_url):
@@ -297,3 +302,18 @@ class Gitbook2PDF():
         lis = ET.HTML(text).xpath("//ul[@class='summary']//li")
         return IndexParser(lis, start_url).parse()
 
+
+def another_format_urls(base_url):
+    response = requests.get(base_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    soup = soup.find('nav', {'aria-label': 'Table of contents'})
+    links_data = []
+
+    for link in soup.find_all('a'):
+        link_text = link.get_text()
+        link_url = link.get('href')
+
+        if "Powered By" not in link_text:
+            links_data.append({'level': 1, 'title': link_text, 'url': '/'.join(base_url.split('/')[:-2])+link_url})
+
+    return links_data
