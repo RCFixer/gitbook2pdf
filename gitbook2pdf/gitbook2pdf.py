@@ -11,6 +11,18 @@ import sys
 import os
 import uuid
 import json
+import string
+import random
+
+
+IGNORE_TAGS = ['pre', 'code']
+ORIGINAL_AND_TRANSLATE_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+INNER_TRANSLATE_TAGS = ['div', 'li']
+TAG_WITH_CODE = ['p', 'li']
+TAG_WITH_TEXT = ['p', 'li']
+
+ALLOW_INNER_TAGS = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'ul', 'ol', 'img']
+
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -105,8 +117,8 @@ class ChapterParser():
         context = self.parsehead(context)
         # return html.unescape(ET.tostring(context, encoding='utf-8').decode())
         html_doc = ET.tostring(context, encoding='utf-8').decode()
-        # translate_html = translate_main(html_doc)
-        return html_doc
+        translate_html = translate_main(html_doc)
+        return translate_html
 
     def parsehead(self, context):
         def level(num):
@@ -236,12 +248,13 @@ class Gitbook2PDF():
         except Exception as e:
             print("retrying : ", url)
             metatext = request(url, self.headers)
-        # try:
-        text = ChapterParser(metatext, title, level, ).parser()
-        print("done : ", url)
-        self.content_list[index] = text
-        # except IndexError:
-        #     print('faild at : ', url, ' maybe content is empty?')
+        try:
+            text = ChapterParser(metatext, title, level, ).parser()
+            print("done : ", url)
+            self.content_list[index] = text
+        except IndexError:
+            print('faild at : ', url, ' retrying')
+            self.gettext(index, url, level, title)
 
     def write_pdf(self, fname, html_text, css_text):
         tmphtml = weasyprint.HTML(string=html_text)
@@ -259,7 +272,7 @@ class Gitbook2PDF():
         self.base_url = response.url
         start_url = response.url
         text = response.text
-        soup = BeautifulSoup(text, 'html.parser')
+        soup = BeautifulSoup(text, 'lxml')
 
         # If the output file name is not provided, grab the html title as the file name.
         if not self.fname:
@@ -303,7 +316,13 @@ class Gitbook2PDF():
         return IndexParser(lis, start_url).parse()
 
 
+def check_alphabet(text, alphabet=set('абвгдеёжзийклмнопрстуфхцчшщъыьэюя')):
+    return not alphabet.isdisjoint(text.lower())
+
+
 def translate_text(text):
+    if check_alphabet(text):
+        return text
     url = "http://0.0.0.0:5000/translate"
     data = {
         "q": text,
@@ -320,26 +339,56 @@ def translate_text(text):
 
 
 def transform_text(tag):
-    if tag.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol'] and tag.contents:
+    if tag.name in INNER_TRANSLATE_TAGS and len(tag.contents) > 1:
+        search_forward = False
+        inner_tags = tag.find_all(recursive=False)
+        if inner_tags:
+            for inner_tag in inner_tags:
+                if inner_tag.name not in ALLOW_INNER_TAGS:
+                    search_forward = True
+                    break
+            if not search_forward:
+                for inner_tag in inner_tags:
+                    transform_text(inner_tag)
+                return
+    if tag.name in IGNORE_TAGS:
+        pass
+    elif tag.name in ORIGINAL_AND_TRANSLATE_TAGS and tag.string:
+        tag.string = tag.string + f' ({translate_text(tag.string)})'
+    # elif tag.name in ['a'] and tag.string:
+    #     tag.string = translate(tag.string)
+    elif tag.name in TAG_WITH_CODE and len(tag.contents) > 1 and tag.string is None:
         tag_text_list = [str(tag_part) for tag_part in tag.contents]
         code_blocks = {}
         for index, tag_text in enumerate(tag_text_list):
-            if '<code>' in tag_text:
-                current_uuid = str(uuid.uuid4())
-                code_blocks[current_uuid] = tag_text
-                tag_text_list[index] = current_uuid
+            if '<code>' in tag_text or '<img' in tag_text or '<a' in tag_text:
+                # id_element = ''.join(random.choices(string.ascii_uppercase + string.digits + string.ascii_lowercase, k=10))
+                id_element = ''.join(random.choices(string.digits, k=6))
+                current_id = f' {id_element} '
+                code_blocks[current_id] = tag_text
+                tag_text_list[index] = current_id
         tag_text = ''.join(tag_text_list)
         tag_text = translate_text(tag_text)
         for key_uuid, value_code in code_blocks.items():
-            tag_text = tag_text.replace(key_uuid, value_code)
+            tag_text = tag_text.replace(key_uuid.strip(), value_code)
         tag_text = f'<{tag.name}>{tag_text}</{tag.name}>'
         new_tag = BeautifulSoup(tag_text, 'html.parser')
-        tag.replace_with(new_tag)
+        try:
+            tag.replace_with(new_tag)
+        except ValueError:
+            return
+    elif tag.name in TAG_WITH_TEXT and len(tag.contents) == 1 and tag.string:
+        tag.string = translate_text(tag.string)
 
 
 def translate_main(html_doc):
-    soup = BeautifulSoup(html_doc, 'html.parser')
+    # html_doc = minify_html.minify(html_doc)
+    soup = BeautifulSoup(html_doc, 'lxml')
     tags = soup.find_all()
     for tag in tags:
         transform_text(tag)
+    many_li = soup.find_all('li')
+    for li in many_li:
+        transform_text(li)
+
     return str(soup)
